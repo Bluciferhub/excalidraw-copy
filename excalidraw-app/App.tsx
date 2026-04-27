@@ -405,7 +405,7 @@ const ExcalidrawWrapper = ({
       resolvablePromise<ExcalidrawInitialDataState | null>();
   }
 
-  // Load notebook content if we have a notebookId
+  // Load notebook name
   useEffect(() => {
     if (notebookId) {
       notebookStoreAPI.getNotebook(notebookId).then((nb) => {
@@ -413,18 +413,7 @@ const ExcalidrawWrapper = ({
           setNotebookName(nb.name);
         }
       });
-      loadNotebookContent(notebookId).then((content) => {
-        if (content && excalidrawAPI) {
-          excalidrawAPI.updateScene({
-            elements: content.elements as any,
-            appState: content.appState as any,
-            captureUpdate: CaptureUpdateAction.NEVER,
-          });
-        }
-      });
     }
-    // We only want this to run when notebookId first appears
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notebookId]);
 
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -558,10 +547,29 @@ const ExcalidrawWrapper = ({
       return;
     }
 
-    initializeScene({ collabAPI, excalidrawAPI }).then(async (data) => {
-      loadImages(data, /* isInitialLoad */ true);
-      initialStatePromiseRef.current.promise.resolve(data.scene);
-    });
+    // If editing a notebook, load notebook-specific content instead of localStorage
+    if (notebookId) {
+      loadNotebookContent(notebookId).then((content) => {
+        if (content) {
+          initialStatePromiseRef.current.promise.resolve({
+            elements: content.elements as any,
+            appState: content.appState as any,
+          });
+        } else {
+          // New notebook — start with empty canvas
+          initialStatePromiseRef.current.promise.resolve({
+            elements: [],
+            appState: {},
+          });
+        }
+      });
+    } else {
+      // Default behavior — load from localStorage (for non-notebook usage)
+      initializeScene({ collabAPI, excalidrawAPI }).then(async (data) => {
+        loadImages(data, /* isInitialLoad */ true);
+        initialStatePromiseRef.current.promise.resolve(data.scene);
+      });
+    }
 
     const onHashChange = async (event: HashChangeEvent) => {
       event.preventDefault();
@@ -717,41 +725,43 @@ const ExcalidrawWrapper = ({
       collabAPI.syncElements(elements);
     }
 
-    // this check is redundant, but since this is a hot path, it's best
-    // not to evaludate the nested expression every time
-    if (!LocalData.isSavePaused()) {
-      LocalData.save(elements, appState, files, () => {
-        if (excalidrawAPI) {
-          let didChange = false;
+    // When editing a notebook, ONLY save to notebook storage (not global localStorage)
+    // This prevents data from bleeding between notebooks
+    if (notebookId) {
+      if (elements.length > 0) {
+        saveNotebookContent(notebookId, elements as any, appState);
+      }
+    } else {
+      // Default behavior — save to global localStorage (for non-notebook usage)
+      if (!LocalData.isSavePaused()) {
+        LocalData.save(elements, appState, files, () => {
+          if (excalidrawAPI) {
+            let didChange = false;
 
-          const elements = excalidrawAPI
-            .getSceneElementsIncludingDeleted()
-            .map((element) => {
-              if (
-                LocalData.fileStorage.shouldUpdateImageElementStatus(element)
-              ) {
-                const newElement = newElementWith(element, { status: "saved" });
-                if (newElement !== element) {
-                  didChange = true;
+            const elements = excalidrawAPI
+              .getSceneElementsIncludingDeleted()
+              .map((element) => {
+                if (
+                  LocalData.fileStorage.shouldUpdateImageElementStatus(element)
+                ) {
+                  const newElement = newElementWith(element, { status: "saved" });
+                  if (newElement !== element) {
+                    didChange = true;
+                  }
+                  return newElement;
                 }
-                return newElement;
-              }
-              return element;
-            });
+                return element;
+              });
 
-          if (didChange) {
-            excalidrawAPI.updateScene({
-              elements,
-              captureUpdate: CaptureUpdateAction.NEVER,
-            });
+            if (didChange) {
+              excalidrawAPI.updateScene({
+                elements,
+                captureUpdate: CaptureUpdateAction.NEVER,
+              });
+            }
           }
-        }
-      });
-    }
-
-    // Save to notebook storage (GitHub + IDB) if editing a notebook
-    if (notebookId && elements.length > 0) {
-      saveNotebookContent(notebookId, elements as any, appState);
+        });
+      }
     }
 
     // Render the debug scene if the debug canvas is available

@@ -191,6 +191,11 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState<string | null>(null);
   const [githubConnected, setGithubConnected] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    id: string;
+    name: string;
+    permanent: boolean;
+  } | null>(null);
 
   const loadNotebooks = useCallback(async () => {
     const all = await notebookStoreAPI.getAllNotebooks();
@@ -216,10 +221,26 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
 
   const handleDelete = useCallback(
     async (id: string) => {
-      await notebookStoreAPI.softDeleteNotebook(id);
+      const nb = await notebookStoreAPI.getNotebook(id);
+      setDeleteConfirm({ id, name: nb?.name || "this notebook", permanent: false });
+    },
+    [],
+  );
+
+  const confirmDelete = useCallback(
+    async () => {
+      if (!deleteConfirm) return;
+      if (deleteConfirm.permanent) {
+        await deleteNotebookFromGitHub(deleteConfirm.id);
+        await deleteNotebookContent(deleteConfirm.id);
+        await notebookStoreAPI.permanentlyDeleteNotebook(deleteConfirm.id);
+      } else {
+        await notebookStoreAPI.softDeleteNotebook(deleteConfirm.id);
+      }
+      setDeleteConfirm(null);
       await loadNotebooks();
     },
-    [loadNotebooks],
+    [deleteConfirm, loadNotebooks],
   );
 
   const handleRestore = useCallback(
@@ -232,12 +253,10 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
 
   const handlePermanentDelete = useCallback(
     async (id: string) => {
-      await deleteNotebookFromGitHub(id);
-      await deleteNotebookContent(id);
-      await notebookStoreAPI.permanentlyDeleteNotebook(id);
-      await loadNotebooks();
+      const nb = await notebookStoreAPI.getNotebook(id);
+      setDeleteConfirm({ id, name: nb?.name || "this notebook", permanent: true });
     },
-    [loadNotebooks],
+    [],
   );
 
   const handleRename = useCallback(
@@ -266,7 +285,7 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
     <div className="dashboard" id="dashboard">
       {/* Header */}
       <div className="dashboard__header">
-        <h1 className="dashboard__title">All Notebooks</h1>
+        <h1 className="dashboard__title">Vijay-All Notebooks</h1>
         <p className="dashboard__subtitle">Your personal knowledge base</p>
       </div>
 
@@ -435,6 +454,33 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
             loadNotebooks();
           }}
         />
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {deleteConfirm && (
+        <div className="dialog-overlay" onClick={() => setDeleteConfirm(null)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h2 className="dialog__title">
+              {deleteConfirm.permanent ? "Delete Forever?" : "Move to Recycle Bin?"}
+            </h2>
+            <p style={{ color: "#8b949e", fontSize: "0.9rem", lineHeight: 1.6, margin: "0 0 1.5rem" }}>
+              {deleteConfirm.permanent
+                ? `Are you sure you want to permanently delete "${deleteConfirm.name}"? This action cannot be undone and will also remove it from GitHub.`
+                : `Are you sure you want to delete "${deleteConfirm.name}"? You can restore it later from the Recycle Bin.`}
+            </p>
+            <div className="dialog__actions">
+              <button className="btn btn--secondary" onClick={() => setDeleteConfirm(null)}>
+                Cancel
+              </button>
+              <button
+                className={deleteConfirm.permanent ? "btn btn--danger" : "btn btn--primary"}
+                onClick={confirmDelete}
+              >
+                {deleteConfirm.permanent ? "Delete Forever" : "Move to Recycle Bin"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
