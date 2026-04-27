@@ -358,3 +358,136 @@ export const flushGitHubSave = (notebookId: string): void => {
     saveTimers.delete(notebookId);
   }
 };
+
+// ─── Notebook Index Sync ────────────────────────────────────────────────────
+// Saves/loads `notebooks-index.json` so the notebook list syncs across devices.
+
+const INDEX_FILE_PATH = "notebooks-index.json";
+let indexSha: string | null = null;
+
+export interface NotebookIndexEntry {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  gradient: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+  githubPath: string;
+}
+
+export const saveNotebookIndex = async (
+  notebooks: NotebookIndexEntry[],
+): Promise<void> => {
+  if (!isGitHubConfigured()) {
+    return;
+  }
+
+  try {
+    await ensureRepoExists();
+
+    const fileContent = btoa(
+      unescape(encodeURIComponent(JSON.stringify(notebooks, null, 2))),
+    );
+
+    // Get current SHA if we don't have it
+    if (!indexSha) {
+      try {
+        const existing = await githubFetch(
+          `/repos/${getGitHubOwner()}/${getGitHubRepo()}/contents/${INDEX_FILE_PATH}`,
+        );
+        if (existing.ok) {
+          const data: GitHubFileResponse = await existing.json();
+          indexSha = data.sha;
+        }
+      } catch {
+        // File doesn't exist yet
+      }
+    }
+
+    const body: Record<string, string> = {
+      message: "Update notebooks index",
+      content: fileContent,
+      branch: GITHUB_DEFAULTS.BRANCH,
+    };
+
+    if (indexSha) {
+      body.sha = indexSha;
+    }
+
+    const response = await githubFetch(
+      `/repos/${getGitHubOwner()}/${getGitHubRepo()}/contents/${INDEX_FILE_PATH}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+      },
+    );
+
+    if (response.ok) {
+      const result = await response.json();
+      indexSha = result.content?.sha || null;
+    } else if (response.status === 409 || response.status === 422) {
+      // SHA conflict — refetch and retry
+      const refetch = await githubFetch(
+        `/repos/${getGitHubOwner()}/${getGitHubRepo()}/contents/${INDEX_FILE_PATH}`,
+      );
+      if (refetch.ok) {
+        const data: GitHubFileResponse = await refetch.json();
+        body.sha = data.sha;
+        const retry = await githubFetch(
+          `/repos/${getGitHubOwner()}/${getGitHubRepo()}/contents/${INDEX_FILE_PATH}`,
+          { method: "PUT", body: JSON.stringify(body) },
+        );
+        if (retry.ok) {
+          const retryResult = await retry.json();
+          indexSha = retryResult.content?.sha || null;
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Failed to save notebook index to GitHub:", error);
+  }
+};
+
+export const loadNotebookIndex = async (): Promise<NotebookIndexEntry[] | null> => {
+  if (!isGitHubConfigured()) {
+    return null;
+  }
+
+  try {
+    const response = await githubFetch(
+      `/repos/${getGitHubOwner()}/${getGitHubRepo()}/contents/${INDEX_FILE_PATH}`,
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data: GitHubFileResponse = await response.json();
+    indexSha = data.sha;
+
+    const decoded = decodeURIComponent(escape(atob(data.content)));
+    return JSON.parse(decoded);
+  } catch (error) {
+    console.error("Failed to load notebook index from GitHub:", error);
+    return null;
+  }
+};
+
+// Debounced index save
+let indexSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+export const debouncedSaveNotebookIndex = (
+  notebooks: NotebookIndexEntry[],
+  delayMs: number = 3000,
+): void => {
+  if (indexSaveTimer) {
+    clearTimeout(indexSaveTimer);
+  }
+  indexSaveTimer = setTimeout(() => {
+    saveNotebookIndex(notebooks);
+    indexSaveTimer = null;
+  }, delayMs);
+};
+

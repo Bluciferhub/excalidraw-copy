@@ -4,9 +4,15 @@ import {
   type NotebookMeta,
 } from "../data/notebookStore";
 import { deleteNotebookContent } from "../data/notebookContent";
-import { deleteNotebookFromGitHub, isGitHubConfigured } from "../data/githubSync";
+import {
+  deleteNotebookFromGitHub,
+  isGitHubConfigured,
+  loadNotebookIndex,
+  debouncedSaveNotebookIndex,
+} from "../data/githubSync";
 import { NewNotebookDialog } from "./NewNotebookDialog";
 import { GitHubSettings } from "./GitHubSettings";
+import { NOTEBOOK_COLORS } from "../app_constants";
 
 import "./Dashboard.scss";
 
@@ -14,6 +20,8 @@ const NOTEBOOK_ICONS = [
   "📓", "📋", "📝", "📐", "💡", "🧠", "🎨", "📊",
   "🔬", "🗺️", "📚", "✏️", "🖊️", "📌", "🏗️", "⚡",
 ];
+
+const THEME_KEY = "excalidraw-notebook-theme";
 
 const formatDate = (ts: number): string => {
   const d = new Date(ts);
@@ -196,6 +204,18 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
     name: string;
     permanent: boolean;
   } | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    return (localStorage.getItem(THEME_KEY) as "dark" | "light") || "dark";
+  });
+
+  // Sync index to GitHub whenever notebooks change
+  const syncIndexToGitHub = useCallback(async () => {
+    if (isGitHubConfigured()) {
+      const indexEntries = await notebookStoreAPI.getIndexEntries();
+      debouncedSaveNotebookIndex(indexEntries);
+    }
+  }, []);
 
   const loadNotebooks = useCallback(async () => {
     const all = await notebookStoreAPI.getAllNotebooks();
@@ -204,19 +224,49 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
     setDeletedNotebooks(deleted);
   }, []);
 
+  // On mount: sync from GitHub if configured, then load local
   useEffect(() => {
-    loadNotebooks();
-    setGithubConnected(isGitHubConfigured());
+    const init = async () => {
+      const connected = isGitHubConfigured();
+      setGithubConnected(connected);
+
+      if (connected) {
+        setSyncing(true);
+        try {
+          const remoteIndex = await loadNotebookIndex();
+          if (remoteIndex && remoteIndex.length > 0) {
+            await notebookStoreAPI.importFromIndex(remoteIndex);
+          }
+        } catch (error) {
+          console.error("Failed to sync from GitHub:", error);
+        }
+        setSyncing(false);
+      }
+
+      await loadNotebooks();
+    };
+    init();
   }, [loadNotebooks]);
+
+  // Apply theme to body
+  useEffect(() => {
+    document.documentElement.setAttribute("data-dashboard-theme", theme);
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  };
 
   const handleCreateNotebook = useCallback(
     async (name: string, colorIndex: number, icon: string) => {
       const nb = await notebookStoreAPI.createNotebook(name, colorIndex, icon);
       setShowNewDialog(false);
       await loadNotebooks();
+      await syncIndexToGitHub();
       onOpenNotebook(nb.id);
     },
-    [loadNotebooks, onOpenNotebook],
+    [loadNotebooks, onOpenNotebook, syncIndexToGitHub],
   );
 
   const handleDelete = useCallback(
@@ -239,16 +289,18 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
       }
       setDeleteConfirm(null);
       await loadNotebooks();
+      await syncIndexToGitHub();
     },
-    [deleteConfirm, loadNotebooks],
+    [deleteConfirm, loadNotebooks, syncIndexToGitHub],
   );
 
   const handleRestore = useCallback(
     async (id: string) => {
       await notebookStoreAPI.restoreNotebook(id);
       await loadNotebooks();
+      await syncIndexToGitHub();
     },
-    [loadNotebooks],
+    [loadNotebooks, syncIndexToGitHub],
   );
 
   const handlePermanentDelete = useCallback(
@@ -264,8 +316,9 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
       await notebookStoreAPI.updateNotebook(id, { name: newName });
       setRenamingId(null);
       await loadNotebooks();
+      await syncIndexToGitHub();
     },
-    [loadNotebooks],
+    [loadNotebooks, syncIndexToGitHub],
   );
 
   const handleContextMenu = useCallback(
@@ -282,15 +335,31 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
   }, []);
 
   return (
-    <div className="dashboard" id="dashboard">
+    <div className={`dashboard dashboard--${theme}`} id="dashboard">
       {/* Header */}
       <div className="dashboard__header">
         <h1 className="dashboard__title">Vijay-All Notebooks</h1>
         <p className="dashboard__subtitle">Your personal knowledge base</p>
       </div>
 
-      {/* Settings Bar */}
+      {/* Top Bar: Theme Toggle + Settings */}
       <div className="dashboard__settings-bar">
+        {syncing && (
+          <span className="dashboard__sync-badge">
+            ⏳ Syncing from GitHub...
+          </span>
+        )}
+        <button
+          className="settings-btn"
+          onClick={toggleTheme}
+          id="theme-toggle-btn"
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+        >
+          <span className="settings-btn__icon">
+            {theme === "dark" ? "☀️" : "🌙"}
+          </span>
+          {theme === "dark" ? "Light" : "Dark"}
+        </button>
         <button
           className="settings-btn"
           onClick={() => setShowSettings(true)}
@@ -441,6 +510,14 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
           onClose={() => {
             setShowSettings(false);
             setGithubConnected(isGitHubConfigured());
+            // Re-sync when settings close (user may have just configured GitHub)
+            if (isGitHubConfigured()) {
+              loadNotebookIndex().then((remote) => {
+                if (remote && remote.length > 0) {
+                  notebookStoreAPI.importFromIndex(remote).then(loadNotebooks);
+                }
+              });
+            }
           }}
         />
       )}
@@ -451,7 +528,7 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
           notebookId={showColorPicker}
           onClose={() => {
             setShowColorPicker(null);
-            loadNotebooks();
+            loadNotebooks().then(syncIndexToGitHub);
           }}
         />
       )}
@@ -463,7 +540,7 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
             <h2 className="dialog__title">
               {deleteConfirm.permanent ? "Delete Forever?" : "Move to Recycle Bin?"}
             </h2>
-            <p style={{ color: "#8b949e", fontSize: "0.9rem", lineHeight: 1.6, margin: "0 0 1.5rem" }}>
+            <p style={{ color: "var(--dash-text-secondary)", fontSize: "0.9rem", lineHeight: 1.6, margin: "0 0 1.5rem" }}>
               {deleteConfirm.permanent
                 ? `Are you sure you want to permanently delete "${deleteConfirm.name}"? This action cannot be undone and will also remove it from GitHub.`
                 : `Are you sure you want to delete "${deleteConfirm.name}"? You can restore it later from the Recycle Bin.`}
@@ -487,8 +564,6 @@ export const Dashboard = ({ onOpenNotebook }: DashboardProps) => {
 };
 
 // ─── Color Picker Dialog ──────────────────────────────────────────────────
-
-import { NOTEBOOK_COLORS } from "../app_constants";
 
 const ColorPickerDialog = ({
   notebookId,

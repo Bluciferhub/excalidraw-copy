@@ -131,4 +131,79 @@ export const notebookStoreAPI = {
       await set(id, existing, notebookStore);
     }
   },
+
+  /**
+   * Import notebooks from the GitHub index (for cross-device sync).
+   * Merges remote entries with local — remote wins for metadata,
+   * local-only entries are preserved.
+   */
+  async importFromIndex(
+    remoteEntries: Array<{
+      id: string;
+      name: string;
+      icon: string;
+      color: string;
+      gradient: string;
+      createdAt: number;
+      updatedAt: number;
+      deletedAt?: number;
+      githubPath: string;
+    }>,
+  ): Promise<void> {
+    for (const remote of remoteEntries) {
+      const local = await get<NotebookMeta>(remote.id, notebookStore);
+
+      if (!local) {
+        // Notebook doesn't exist locally — import it
+        await set(
+          remote.id,
+          {
+            ...remote,
+            githubSha: undefined,
+          } as NotebookMeta,
+          notebookStore,
+        );
+      } else if (remote.updatedAt > local.updatedAt) {
+        // Remote is newer — update local metadata (keep local githubSha)
+        await set(
+          remote.id,
+          {
+            ...remote,
+            githubSha: local.githubSha,
+          } as NotebookMeta,
+          notebookStore,
+        );
+      }
+    }
+  },
+
+  /**
+   * Get all notebook metadata as index entries for GitHub sync.
+   */
+  async getIndexEntries(): Promise<
+    Array<{
+      id: string;
+      name: string;
+      icon: string;
+      color: string;
+      gradient: string;
+      createdAt: number;
+      updatedAt: number;
+      deletedAt?: number;
+      githubPath: string;
+    }>
+  > {
+    const all = await entries<string, NotebookMeta>(notebookStore);
+    return all.map(([, meta]) => ({
+      id: meta.id,
+      name: meta.name,
+      icon: meta.icon,
+      color: meta.color,
+      gradient: meta.gradient,
+      createdAt: meta.createdAt,
+      updatedAt: meta.updatedAt,
+      deletedAt: meta.deletedAt,
+      githubPath: meta.githubPath,
+    }));
+  },
 };
