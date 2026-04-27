@@ -34,7 +34,7 @@ import {
   isDevEnv,
 } from "@excalidraw/common";
 import polyfill from "@excalidraw/excalidraw/polyfill";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { loadFromBlob } from "@excalidraw/excalidraw/data/blob";
 import { t } from "@excalidraw/excalidraw/i18n";
 
@@ -142,6 +142,10 @@ import DebugCanvas, {
 } from "./components/DebugCanvas";
 import { AIComponents } from "./components/AI";
 import { ExcalidrawPlusIframeExport } from "./ExcalidrawPlusIframeExport";
+import { Dashboard } from "./components/Dashboard";
+import { saveNotebookContent, loadNotebookContent } from "./data/notebookContent";
+import { flushGitHubSave } from "./data/githubSync";
+import { notebookStoreAPI } from "./data/notebookStore";
 
 import "./index.scss";
 
@@ -371,8 +375,15 @@ const initializeScene = async (opts: {
   return { scene: null, isExternalScene: false };
 };
 
-const ExcalidrawWrapper = () => {
+const ExcalidrawWrapper = ({
+  notebookId,
+  onBackToDashboard,
+}: {
+  notebookId: string | null;
+  onBackToDashboard: () => void;
+}) => {
   const excalidrawAPI = useExcalidrawAPI();
+  const [notebookName, setNotebookName] = useState<string>("");
 
   const [errorMessage, setErrorMessage] = useState("");
   const isCollabDisabled = isRunningInIframe();
@@ -393,6 +404,28 @@ const ExcalidrawWrapper = () => {
     initialStatePromiseRef.current.promise =
       resolvablePromise<ExcalidrawInitialDataState | null>();
   }
+
+  // Load notebook content if we have a notebookId
+  useEffect(() => {
+    if (notebookId) {
+      notebookStoreAPI.getNotebook(notebookId).then((nb) => {
+        if (nb) {
+          setNotebookName(nb.name);
+        }
+      });
+      loadNotebookContent(notebookId).then((content) => {
+        if (content && excalidrawAPI) {
+          excalidrawAPI.updateScene({
+            elements: content.elements as any,
+            appState: content.appState as any,
+            captureUpdate: CaptureUpdateAction.NEVER,
+          });
+        }
+      });
+    }
+    // We only want this to run when notebookId first appears
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notebookId]);
 
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -716,6 +749,11 @@ const ExcalidrawWrapper = () => {
       });
     }
 
+    // Save to notebook storage (GitHub + IDB) if editing a notebook
+    if (notebookId && elements.length > 0) {
+      saveNotebookContent(notebookId, elements as any, appState);
+    }
+
     // Render the debug scene if the debug canvas is available
     if (debugCanvasRef.current && excalidrawAPI) {
       debugRenderer(
@@ -908,6 +946,21 @@ const ExcalidrawWrapper = () => {
         "is-collaborating": isCollaborating,
       })}
     >
+      {/* Back to Dashboard button */}
+      {notebookId && (
+        <button
+          className="back-to-dashboard"
+          onClick={() => {
+            // Flush any pending GitHub saves before navigating away
+            flushGitHubSave(notebookId);
+            onBackToDashboard();
+          }}
+          title="Back to Dashboard"
+        >
+          <span className="back-to-dashboard__arrow">←</span>
+          {notebookName || "Dashboard"}
+        </button>
+      )}
       <Excalidraw
         onChange={onChange}
         onExport={onExport}
@@ -1266,6 +1319,68 @@ const ExcalidrawWrapper = () => {
   );
 };
 
+// ─── Hash Router ──────────────────────────────────────────────────────────
+
+type AppRoute =
+  | { view: "dashboard" }
+  | { view: "editor"; notebookId: string | null };
+
+const parseRoute = (): AppRoute => {
+  const hash = window.location.hash;
+
+  // #/notebook/{id}
+  const notebookMatch = hash.match(/^#\/notebook\/(.+)$/);
+  if (notebookMatch) {
+    return { view: "editor", notebookId: notebookMatch[1] };
+  }
+
+  // Collaboration or share links use #room= or #json= — let Excalidraw handle those
+  if (hash.startsWith("#room=") || hash.startsWith("#json=") || hash.startsWith("#url=")) {
+    return { view: "editor", notebookId: null };
+  }
+
+  // Everything else → dashboard
+  return { view: "dashboard" };
+};
+
+const useHashRoute = (): [AppRoute, (route: AppRoute) => void] => {
+  const [route, setRouteState] = useState<AppRoute>(parseRoute);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const newRoute = parseRoute();
+      // Only update if the route view or notebookId changes
+      setRouteState((prev) => {
+        if (
+          prev.view !== newRoute.view ||
+          (prev.view === "editor" &&
+            newRoute.view === "editor" &&
+            prev.notebookId !== newRoute.notebookId)
+        ) {
+          return newRoute;
+        }
+        return prev;
+      });
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  const navigate = useCallback((newRoute: AppRoute) => {
+    if (newRoute.view === "dashboard") {
+      window.location.hash = "#/dashboard";
+    } else if (newRoute.view === "editor" && newRoute.notebookId) {
+      window.location.hash = `#/notebook/${newRoute.notebookId}`;
+    } else {
+      window.location.hash = "";
+    }
+    setRouteState(newRoute);
+  }, []);
+
+  return [route, navigate];
+};
+
 const ExcalidrawApp = () => {
   const isCloudExportWindow =
     window.location.pathname === "/excalidraw-plus-export";
@@ -1273,11 +1388,28 @@ const ExcalidrawApp = () => {
     return <ExcalidrawPlusIframeExport />;
   }
 
+  const [route, navigate] = useHashRoute();
+
+  if (route.view === "dashboard") {
+    return (
+      <TopErrorBoundary>
+        <Dashboard
+          onOpenNotebook={(id) =>
+            navigate({ view: "editor", notebookId: id })
+          }
+        />
+      </TopErrorBoundary>
+    );
+  }
+
   return (
     <TopErrorBoundary>
       <Provider store={appJotaiStore}>
         <ExcalidrawAPIProvider>
-          <ExcalidrawWrapper />
+          <ExcalidrawWrapper
+            notebookId={route.notebookId}
+            onBackToDashboard={() => navigate({ view: "dashboard" })}
+          />
         </ExcalidrawAPIProvider>
       </Provider>
     </TopErrorBoundary>

@@ -48,9 +48,33 @@ export const STORAGE_KEYS = {
   IDB_LIBRARY: "excalidraw-library",
   IDB_TTD_CHATS: "excalidraw-ttd-chats",
 
+  // Notebook system
+  IDB_NOTEBOOKS: "excalidraw-notebooks",
+  IDB_NOTEBOOK_CONTENT: "excalidraw-notebook-content",
+  GITHUB_PAT: "excalidraw-github-pat",
+  GITHUB_REPO: "excalidraw-github-repo",
+  GITHUB_OWNER: "excalidraw-github-owner",
+
   // do not use apart from migrations
   __LEGACY_LOCAL_STORAGE_LIBRARY: "excalidraw-library",
 } as const;
+
+export const GITHUB_DEFAULTS = {
+  OWNER: "Bluciferhub",
+  REPO: "vijay_exaldraw_blob",
+  BRANCH: "main",
+} as const;
+
+export const NOTEBOOK_COLORS = [
+  { name: "Emerald", value: "#10b981", gradient: "linear-gradient(135deg, #10b981, #059669)" },
+  { name: "Blue", value: "#3b82f6", gradient: "linear-gradient(135deg, #3b82f6, #2563eb)" },
+  { name: "Purple", value: "#8b5cf6", gradient: "linear-gradient(135deg, #8b5cf6, #7c3aed)" },
+  { name: "Rose", value: "#f43f5e", gradient: "linear-gradient(135deg, #f43f5e, #e11d48)" },
+  { name: "Amber", value: "#f59e0b", gradient: "linear-gradient(135deg, #f59e0b, #d97706)" },
+  { name: "Cyan", value: "#06b6d4", gradient: "linear-gradient(135deg, #06b6d4, #0891b2)" },
+  { name: "Pink", value: "#ec4899", gradient: "linear-gradient(135deg, #ec4899, #db2777)" },
+  { name: "Teal", value: "#14b8a6", gradient: "linear-gradient(135deg, #14b8a6, #0d9488)" },
+] as const;
 
 export const COOKIES = {
   AUTH_STATE_COOKIE: "excplus-auth",
