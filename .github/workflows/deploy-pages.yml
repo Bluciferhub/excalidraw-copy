@@ -30,12 +30,19 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Build for GitHub Pages
-        working-directory: excalidraw-app
-        run: npx vite build --base /excalidraw-copy/
+      - name: Build app
+        run: yarn build:app
         env:
-          VITE_APP_DISABLE_SENTRY: "true"
-          VITE_APP_ENABLE_TRACKING: "false"
+          VITE_APP_GIT_SHA: ${{ github.sha }}
+          # Set base path for GitHub Pages
+          BASE_URL: /excalidraw-copy/
+
+      - name: Fix base path for GitHub Pages
+        run: |
+          # Rebuild with correct base path for GitHub Pages
+          cd excalidraw-app
+          npx vite build --base /excalidraw-copy/
+        env:
           VITE_APP_GIT_SHA: ${{ github.sha }}
 
       - name: Setup Pages
