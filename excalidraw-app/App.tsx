@@ -554,13 +554,20 @@ const ExcalidrawWrapper = ({
         if (content) {
           initialStatePromiseRef.current.promise.resolve({
             elements: content.elements as any,
-            appState: content.appState as any,
+            appState: {
+              currentItemFontFamily: 2,
+              currentItemFontSize: 16,
+              ...(content.appState as any),
+            },
           });
         } else {
           // New notebook — start with empty canvas
           initialStatePromiseRef.current.promise.resolve({
             elements: [],
-            appState: {},
+            appState: {
+              currentItemFontFamily: 2,
+              currentItemFontSize: 16,
+            },
           });
         }
       });
@@ -568,6 +575,11 @@ const ExcalidrawWrapper = ({
       // Default behavior — load from localStorage (for non-notebook usage)
       initializeScene({ collabAPI, excalidrawAPI }).then(async (data) => {
         loadImages(data, /* isInitialLoad */ true);
+        data.scene.appState = {
+          ...data.scene.appState,
+          currentItemFontFamily: 2,
+          currentItemFontSize: 16,
+        };
         initialStatePromiseRef.current.promise.resolve(data.scene);
       });
     }
