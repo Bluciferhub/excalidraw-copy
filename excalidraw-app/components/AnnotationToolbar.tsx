@@ -103,53 +103,79 @@ export const AnnotationToolbar = ({ excalidrawAPI }: AnnotationToolbarProps) => 
 
         const elements = excalidrawAPI.getSceneElementsIncludingDeleted();
         
-        const rectId = `highlight_${Date.now()}`;
+        const rectId = `highlight_${selectedTextElement.id}`;
+        const groupId = `group_highlight_${selectedTextElement.id}`;
         const padding = 8;
         
-        const skeleton = {
-          type: "rectangle" as const,
-          id: rectId,
-          x: selectedTextElement.x - padding,
-          y: selectedTextElement.y - padding,
-          width: selectedTextElement.width + padding * 2,
-          height: selectedTextElement.height + padding * 2,
-          backgroundColor: color.value,
-          fillStyle: "solid" as const,
-          strokeWidth: 0,
-          strokeColor: "transparent",
-          roughness: 0,
-          opacity: 100,
-          groupIds: [...(selectedTextElement.groupIds || []), `group_${rectId}`],
-        };
-
-        try {
-          const newElements = convertToExcalidrawElements([skeleton], { regenerateIds: false });
-          
-          const updatedExisting = elements.map(el => {
-             if (el.id === selectedTextElement.id) {
+        const existingRectIndex = elements.findIndex(e => e.id === rectId);
+        
+        if (existingRectIndex !== -1) {
+          // Highlight already exists, update or delete it
+          const updatedElements = elements.map(el => {
+             if (el.id === rectId) {
                 return newElementWith(el, {
-                   groupIds: [...(el.groupIds || []), `group_${rectId}`]
+                   backgroundColor: color.value,
+                   isDeleted: color.value === "transparent" ? true : el.isDeleted
                 });
              }
              return el;
           });
-
-          // Insert highlight rectangle BEFORE the text element so it renders behind it
-          const textIndex = updatedExisting.findIndex(e => e.id === selectedTextElement.id);
           
-          const finalElements = [...updatedExisting];
-          if (textIndex !== -1) {
-             finalElements.splice(textIndex, 0, newElements[0]);
-          } else {
-             finalElements.push(newElements[0]);
-          }
-
           excalidrawAPI.updateScene({
-            elements: finalElements,
+            elements: updatedElements,
             captureUpdate: CaptureUpdateAction.IMMEDIATELY,
           });
-        } catch (error) {
-          console.error("Highlight failed", error);
+        } else if (color.value !== "transparent") {
+          // Highlight doesn't exist, create it
+          const skeleton = {
+            type: "rectangle" as const,
+            id: rectId,
+            x: selectedTextElement.x - padding,
+            y: selectedTextElement.y - padding,
+            width: selectedTextElement.width + padding * 2,
+            height: selectedTextElement.height + padding * 2,
+            backgroundColor: color.value,
+            fillStyle: "solid" as const,
+            strokeWidth: 0,
+            strokeColor: "transparent",
+            roughness: 0,
+            opacity: 100,
+            groupIds: [...(selectedTextElement.groupIds || []), groupId],
+          };
+
+          try {
+            const newElements = convertToExcalidrawElements([skeleton], { regenerateIds: false });
+            
+            const updatedExisting = elements.map(el => {
+               if (el.id === selectedTextElement.id) {
+                  // Only add the group ID if it's not already there
+                  const currentGroups = el.groupIds || [];
+                  if (!currentGroups.includes(groupId)) {
+                    return newElementWith(el, {
+                       groupIds: [...currentGroups, groupId]
+                    });
+                  }
+               }
+               return el;
+            });
+
+            // Insert highlight rectangle BEFORE the text element so it renders behind it
+            const textIndex = updatedExisting.findIndex(e => e.id === selectedTextElement.id);
+            
+            const finalElements = [...updatedExisting];
+            if (textIndex !== -1) {
+               finalElements.splice(textIndex, 0, newElements[0]);
+            } else {
+               finalElements.push(newElements[0]);
+            }
+
+            excalidrawAPI.updateScene({
+              elements: finalElements,
+              captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+            });
+          } catch (error) {
+            console.error("Highlight failed", error);
+          }
         }
         setShowHighlightPicker(false);
       },
