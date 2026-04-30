@@ -89,7 +89,7 @@
 
 .dashboard__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, 220px);
   gap: 1.25rem;
   max-width: 1200px;
   margin: 0 auto;
@@ -251,7 +251,7 @@
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
-  min-height: 160px;
+  min-height: 130px;
   border: 2px dashed #30363d;
   border-radius: 12px;
   cursor: pointer;
