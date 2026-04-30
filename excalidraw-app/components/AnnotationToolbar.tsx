@@ -24,7 +24,15 @@ const HIGHLIGHT_COLORS = [
   { name: "Pink", value: "#fcc2d7", stroke: "#c2255c" },
   { name: "Orange", value: "#ffd8a8", stroke: "#e8590c" },
   { name: "Purple", value: "#d0bfff", stroke: "#7048e8" },
-  { name: "None", value: "transparent", stroke: "#adb5bd" },
+];
+
+const TEXT_COLORS = [
+  { name: "Black", value: "#1e1e1e" },
+  { name: "Red", value: "#e03131" },
+  { name: "Blue", value: "#1971c2" },
+  { name: "Green", value: "#2b8a3e" },
+  { name: "Orange", value: "#e8590c" },
+  { name: "Purple", value: "#7048e8" },
 ];
 
 const CANVAS_BG_COLORS = [
@@ -54,6 +62,7 @@ export const AnnotationToolbar = ({ excalidrawAPI }: AnnotationToolbarProps) => 
   const [selectedTextElement, setSelectedTextElement] =
     useState<ExcalidrawElement | null>(null);
   const [showHighlightPicker, setShowHighlightPicker] = useState(false);
+  const [showTextColorPicker, setShowTextColorPicker] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ x: 0, y: 0 });
 
   // Watch for selection changes
@@ -82,34 +91,90 @@ export const AnnotationToolbar = ({ excalidrawAPI }: AnnotationToolbarProps) => 
       }
       setSelectedTextElement(null);
       setShowHighlightPicker(false);
+      setShowTextColorPicker(false);
     }, 300);
 
     return () => clearInterval(interval);
   }, [excalidrawAPI]);
 
-  const handleHighlight = useCallback(
-    (color: (typeof HIGHLIGHT_COLORS)[0]) => {
-      if (!excalidrawAPI || !selectedTextElement) return;
+    const handleHighlight = useCallback(
+      (color: (typeof HIGHLIGHT_COLORS)[0]) => {
+        if (!excalidrawAPI || !selectedTextElement) return;
 
-      const elements = excalidrawAPI.getSceneElementsIncludingDeleted();
-      const updatedElements = elements.map((el) => {
-        if (el.id === selectedTextElement.id) {
-          return newElementWith(el, {
-            backgroundColor: color.value,
-            fillStyle: "solid",
+        const elements = excalidrawAPI.getSceneElementsIncludingDeleted();
+        
+        const rectId = `highlight_${Date.now()}`;
+        const padding = 8;
+        
+        const skeleton = {
+          type: "rectangle" as const,
+          id: rectId,
+          x: selectedTextElement.x - padding,
+          y: selectedTextElement.y - padding,
+          width: selectedTextElement.width + padding * 2,
+          height: selectedTextElement.height + padding * 2,
+          backgroundColor: color.value,
+          fillStyle: "solid" as const,
+          strokeWidth: 0,
+          strokeColor: "transparent",
+          roughness: 0,
+          opacity: 100,
+          groupIds: [...(selectedTextElement.groupIds || []), `group_${rectId}`],
+        };
+
+        try {
+          const newElements = convertToExcalidrawElements([skeleton], { regenerateIds: false });
+          
+          const updatedExisting = elements.map(el => {
+             if (el.id === selectedTextElement.id) {
+                return newElementWith(el, {
+                   groupIds: [...(el.groupIds || []), `group_${rectId}`]
+                });
+             }
+             return el;
           });
-        }
-        return el;
-      });
 
-      excalidrawAPI.updateScene({
-        elements: updatedElements,
-        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-      });
-      setShowHighlightPicker(false);
-    },
-    [excalidrawAPI, selectedTextElement],
-  );
+          // Insert highlight rectangle BEFORE the text element so it renders behind it
+          const textIndex = updatedExisting.findIndex(e => e.id === selectedTextElement.id);
+          
+          const finalElements = [...updatedExisting];
+          if (textIndex !== -1) {
+             finalElements.splice(textIndex, 0, newElements[0]);
+          } else {
+             finalElements.push(newElements[0]);
+          }
+
+          excalidrawAPI.updateScene({
+            elements: finalElements,
+            captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+          });
+        } catch (error) {
+          console.error("Highlight failed", error);
+        }
+        setShowHighlightPicker(false);
+      },
+      [excalidrawAPI, selectedTextElement]
+    );
+
+    const handleTextColor = useCallback((colorValue: string) => {
+        if (!excalidrawAPI || !selectedTextElement) return;
+
+        const elements = excalidrawAPI.getSceneElementsIncludingDeleted();
+        const updatedElements = elements.map((el) => {
+          if (el.id === selectedTextElement.id) {
+            return newElementWith(el, {
+              strokeColor: colorValue,
+            });
+          }
+          return el;
+        });
+
+        excalidrawAPI.updateScene({
+          elements: updatedElements,
+          captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        });
+        setShowTextColorPicker(false);
+    }, [excalidrawAPI, selectedTextElement]);
 
   const handleAddNote = useCallback(() => {
     if (!excalidrawAPI || !selectedTextElement) return;
@@ -264,11 +329,25 @@ export const AnnotationToolbar = ({ excalidrawAPI }: AnnotationToolbarProps) => 
     >
       <button
         className="annotation-toolbar__btn annotation-toolbar__btn--highlight"
-        onClick={() => setShowHighlightPicker(!showHighlightPicker)}
+        onClick={() => {
+           setShowHighlightPicker(!showHighlightPicker);
+           setShowTextColorPicker(false);
+        }}
         title="Highlight text (choose color)"
       >
         <span className="annotation-toolbar__btn-icon">🖍️</span>
         Highlight
+      </button>
+      <button
+        className="annotation-toolbar__btn annotation-toolbar__btn--textcolor"
+        onClick={() => {
+           setShowTextColorPicker(!showTextColorPicker);
+           setShowHighlightPicker(false);
+        }}
+        title="Change text color (simulates bold/emphasis)"
+      >
+        <span className="annotation-toolbar__btn-icon">A</span>
+        Color
       </button>
       <button
         className="annotation-toolbar__btn annotation-toolbar__btn--note"
@@ -286,12 +365,27 @@ export const AnnotationToolbar = ({ excalidrawAPI }: AnnotationToolbarProps) => 
               key={color.name}
               className="annotation-toolbar__color"
               style={{
-                background: color.value === "transparent"
-                  ? "repeating-conic-gradient(#ddd 0% 25%, transparent 0% 50%) 50% / 12px 12px"
-                  : color.value,
+                background: color.value,
                 border: `2px solid ${color.stroke}`,
               }}
               onClick={() => handleHighlight(color)}
+              title={color.name}
+            />
+          ))}
+        </div>
+      )}
+
+      {showTextColorPicker && (
+        <div className="annotation-toolbar__picker">
+          {TEXT_COLORS.map((color) => (
+            <button
+              key={color.name}
+              className="annotation-toolbar__color"
+              style={{
+                background: color.value,
+                border: `2px solid rgba(255,255,255,0.2)`,
+              }}
+              onClick={() => handleTextColor(color.value)}
               title={color.name}
             />
           ))}

@@ -52,6 +52,11 @@
   color: #fff3bf;
 }
 
+.annotation-toolbar__btn--textcolor:hover {
+  background: rgba(224, 49, 49, 0.15);
+  color: #ffa8a8;
+}
+
 .annotation-toolbar__btn--note:hover {
   background: rgba(165, 216, 255, 0.15);
   color: #a5d8ff;
