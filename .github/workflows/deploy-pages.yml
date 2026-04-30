@@ -35,13 +35,13 @@ jobs:
         env:
           VITE_APP_GIT_SHA: ${{ github.sha }}
           # Set base path for GitHub Pages
-          BASE_URL: /excalidraw-copy/
+          BASE_URL: /excalidraw-vijay/
 
       - name: Fix base path for GitHub Pages
         run: |
           # Rebuild with correct base path for GitHub Pages
           cd excalidraw-app
-          npx vite build --base /excalidraw-copy/
+          npx vite build --base /excalidraw-vijay/
         env:
           VITE_APP_GIT_SHA: ${{ github.sha }}
 
